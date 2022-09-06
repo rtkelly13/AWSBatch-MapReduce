@@ -1,0 +1,3 @@
+name: awsbatch-mapreduce
+runtime: dotnet
+description: An example program showing how to implement Map Reduce using AWS Batch
