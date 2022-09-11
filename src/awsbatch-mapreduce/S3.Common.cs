@@ -3,9 +3,9 @@ using Amazon.S3.Transfer;
 
 namespace awsbatch_mapreduce;
 
-public static partial class Implementation
+public static class S3
 {
-    private static async Task<MemoryStream> LoadFile(AmazonS3Client s3Client, string key)
+    public static async Task<MemoryStream> LoadFile(AmazonS3Client s3Client, string key)
     {
         using var fileS3Upload = new MemoryStream();
         var fileTransferUtility =
@@ -18,7 +18,7 @@ public static partial class Implementation
         return ms;
     }
 
-    private static async Task UploadFile(AmazonS3Client s3Client, MemoryStream file, string key)
+    public static async Task UploadFile(AmazonS3Client s3Client, MemoryStream file, string key)
     {
         using var fileS3Upload = new MemoryStream();
         await file.CopyToAsync(fileS3Upload);

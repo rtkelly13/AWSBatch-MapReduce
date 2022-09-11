@@ -7,5 +7,5 @@ Todo Convert long/lat to web mercator co-ordinates somehow in pandas
 Installed packages
 
 ```
-pip install pandas holoviews hvplot datashader fastparquet python-snappy pyproj
+pip install pandas holoviews hvplot datashader fastparquet python-snappy pyproj boto3 s3fs selenium
 ```

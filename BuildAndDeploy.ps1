@@ -26,10 +26,19 @@ if(-not $SkipBuild){
     $env:AWS_PROFILE = $awsProfile
     aws ecr get-login-password | docker login --username AWS --password-stdin $dkrUrl
     
+    docker build -f ./Powershell.Dockerfile -t "${imageName}:reduce" .
+    docker tag "${imageName}:reduce" "${dkrUrl}/${imageName}:reduce"
+    docker push "${dkrUrl}/${imageName}:reduce"
     
-    docker build -f ./Dockerfile -t ${imageName} .
-    docker tag "${imageName}:latest" "${dkrUrl}/${imageName}:latest"
-    docker push "${dkrUrl}/${imageName}:latest"
+    docker build -f ./Dockerfile -t "${imageName}:setup" .
+    docker tag "${imageName}:setup" "${dkrUrl}/${imageName}:setup"
+    docker push "${dkrUrl}/${imageName}:setup"
+    
+    docker build -f ./Python.Dockerfile -t "${imageName}:map" .
+    docker tag "${imageName}:map" "${dkrUrl}/${imageName}:map"
+    docker push "${dkrUrl}/${imageName}:map"
+    
+   
 }
 
 

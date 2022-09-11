@@ -102,12 +102,6 @@ return await Deployment.RunAsync(async () =>
         AssumeRolePolicy = assumeRolePolicySpotfleet,
     });
 
-    var awsSpotfleetServiceRolePolicyAttachment =new RolePolicyAttachment("AmazonEC2SpotFleetTaggingRolePolicyAttachment", new()
-    {
-        Role = awsSpotfleetServiceRole.Name,
-        PolicyArn = "arn:aws:iam::aws:policy/service-role/AmazonEC2SpotFleetTaggingRole",
-    });
-    
     var sampleSecurityGroup = new SecurityGroup("batch-security-group", new()
     {
         Name = "batch-security-group",
@@ -140,9 +134,9 @@ return await Deployment.RunAsync(async () =>
     var defaultAzb = GetDefaultSubnet('b');
     var defaultAzc = GetDefaultSubnet('c');
 
-    var sampleComputeEnvironment = new ComputeEnvironment("sampleComputeEnvironment", new()
+    var computeEnvironment = new ComputeEnvironment("batch-demo-ec2", new()
     {
-        ComputeEnvironmentName = "batch-demo",
+        ComputeEnvironmentName = "batch-demo-ec2",
         ComputeResources = new ComputeEnvironmentComputeResourcesArgs
         {
             InstanceRole = ecsInstanceRoleInstanceProfile.Arn,
@@ -150,7 +144,7 @@ return await Deployment.RunAsync(async () =>
             {
                 "optimal"
             },
-            MaxVcpus = 16,
+            MaxVcpus = 32,
             MinVcpus = 0,
             SecurityGroupIds = new[]
             {
@@ -162,8 +156,7 @@ return await Deployment.RunAsync(async () =>
                 defaultAzb.Id,
                 defaultAzc.Id,
             },
-            Type = "SPOT",
-            SpotIamFleetRole = awsSpotfleetServiceRole.Arn
+            Type = "EC2"
         },
         ServiceRole = awsBatchServiceRole.Arn,
         Type = "MANAGED",
@@ -171,8 +164,7 @@ return await Deployment.RunAsync(async () =>
     {
         DependsOn = new[]
         {
-            awsBatchServiceRolePolicyAttachment,
-            awsSpotfleetServiceRolePolicyAttachment
+            awsBatchServiceRolePolicyAttachment
         },
     });
     
@@ -183,7 +175,7 @@ return await Deployment.RunAsync(async () =>
         Priority = 1,
         ComputeEnvironments = new[]
         {
-            sampleComputeEnvironment.Arn
+            computeEnvironment.Arn
         },
     });
 
@@ -212,9 +204,10 @@ return await Deployment.RunAsync(async () =>
     });
     
     var imageUrl = $"{caller.AccountId}.dkr.ecr.eu-west-1.amazonaws.com/{repoName}";
-    var test = new JobDefinition(jobName, new()
+    var setupJobName = $"{jobName}-setup";
+    new JobDefinition(setupJobName, new()
     {
-        Name = jobName,
+        Name = setupJobName,
         Timeout = new JobDefinitionTimeoutArgs
         {
             AttemptDurationSeconds = (int)TimeSpan.FromHours(1).TotalSeconds
@@ -222,16 +215,55 @@ return await Deployment.RunAsync(async () =>
         ContainerProperties = jobDefinitionRole.Arn.Apply(arn => 
             JsonConvert.SerializeObject(new 
             {
-                command = new []{ "Ref::Verb" },
-                image = imageUrl,
+                command = new string[]{ },
+                image = $"{imageUrl}:setup",
                 jobRoleArn = arn,
                 vcpus = 1,
                 memory = 1024,
             }, Formatting.Indented)),
-        Parameters = new InputMap<string>{
-            {"Verb", "Setup"}
-        },
+        Parameters = new InputMap<string>(),
         Type = "container",
+    });
+    var mapJobName = $"{jobName}-map";
+    new JobDefinition(mapJobName, new()
+    {
+        Name = mapJobName,
+        Timeout = new JobDefinitionTimeoutArgs
+        {
+            AttemptDurationSeconds = (int)TimeSpan.FromHours(1).TotalSeconds
+        },
+        ContainerProperties = jobDefinitionRole.Arn.Apply(arn => 
+            JsonConvert.SerializeObject(new 
+            {
+                command = new string[]{  },
+                image = $"{imageUrl}:map",
+                jobRoleArn = arn,
+                vcpus = 4,
+                memory = 16_384,
+            }, Formatting.Indented)),
+        Parameters = new InputMap<string>(),
+        Type = "container"
+    });
+    
+    var reduceJobName = $"{jobName}-reduce";
+    new JobDefinition(reduceJobName, new()
+    {
+        Name = reduceJobName,
+        Timeout = new JobDefinitionTimeoutArgs
+        {
+            AttemptDurationSeconds = (int)TimeSpan.FromHours(1).TotalSeconds
+        },
+        ContainerProperties = jobDefinitionRole.Arn.Apply(arn => 
+            JsonConvert.SerializeObject(new 
+            {
+                command = new string[]{  },
+                image = $"{imageUrl}:reduce",
+                jobRoleArn = arn,
+                vcpus = 4,
+                memory = 8192,
+            }, Formatting.Indented)),
+        Parameters = new InputMap<string>(),
+        Type = "container"
     });
 
     // Export the name of the bucket

@@ -1,69 +1,92 @@
-import datashader as ds, pandas as pd, colorcet as cc, numpy as np
+import holoviews as hv, datashader as ds, pandas as pd, colorcet as cc, numpy as np
 from datashader.utils import export_image
 from pyproj import Transformer
+import json
+import os
+import boto3
+import platform
+
+hv.extension('bokeh')
+
+profile_name = os.environ.get("AWS_PROFILE")
+if profile_name is not None:
+    boto3.setup_default_session(profile_name=profile_name)
+
+s3_client = boto3.client('s3')
 
 TRAN_4326_TO_3857 = Transformer.from_crs("EPSG:4326", "EPSG:3857")
-
-exportPath = "../../data/results"
-run_normal = True
-run_clean = True
-
-def fix_num(v):
-    return np.float32(v)
-
-def apply_transform(x):
-    x, y = TRAN_4326_TO_3857.transform(x['dropoff_latitude'], x['dropoff_longitude'])
-    return pd.Series([fix_num(x), fix_num(y)], index=['dropoff_x', 'dropoff_y'])
-
-def run():
-    if run_normal:
-        path = '../../data/yellow_tripdata_2010-01.parquet'
-        df = pd.read_parquet(path, columns=['dropoff_longitude', 'dropoff_latitude'])
-
-        print(len(df.index))
-        dropoff_x, dropoff_y = TRAN_4326_TO_3857.transform(
-            df['dropoff_latitude'].to_numpy(),
-            df['dropoff_longitude'].to_numpy())
-        df['dropoff_x'] = dropoff_x
-        df['dropoff_y'] = dropoff_y
-        #df = df.apply(apply_transform, axis=1)
-        filt = (df['dropoff_x'] >= -8254332.0) & (df['dropoff_x'] <= -8209813.5) & \
-               (4965255.5 <= df['dropoff_y']) & (4988769.5 >= df['dropoff_y'])
-        df = df.loc[filt]
-        print(df.dropoff_x.mean())
-        print(df.dropoff_y.mean())
-        print(len(df.index))
-        print(df.head(100))
-        print(df.dtypes)
-
-        normal_parquet_path = exportPath + "/normal.parquet"
-        df.to_parquet(path=normal_parquet_path, engine='fastparquet')
-        canvas = ds.Canvas(plot_width=1200, plot_height=1000)
-        agg = canvas.points(df, 'dropoff_x', 'dropoff_y')
-        shaded = ds.tf.shade(agg, cmap=cc.fire)
-        # img = ds.tf.set_background(shaded, "black")
-        export_image(shaded, "output-original", background="black", export_path=exportPath)
-
-    if run_clean:
-        path = '../../data/nyc_taxi_wide.parquet'
-        df = pd.read_parquet(path, columns=['dropoff_x', 'dropoff_y'])
-        print(df.dropoff_x.mean())
-        print(df.dropoff_y.mean())
-        print(df.head(100))
-        print(df.dtypes)
-
-        print(df['dropoff_x'].min())
-        print(df['dropoff_x'].max())
-        print(df['dropoff_y'].min())
-        print(df['dropoff_y'].max())
-        df.to_parquet(path=exportPath + "/clean.parquet", engine='fastparquet')
-
-        canvas = ds.Canvas(plot_width=1200, plot_height=1000)
-        agg = canvas.points(df, 'dropoff_x', 'dropoff_y')
-        shaded = ds.tf.shade(agg, cmap=cc.fire)
-        # img = ds.tf.set_background(shaded, "black")
-        export_image(shaded, "output", background="black", export_path=exportPath)
+bucket_name = "map-reduce-demo-bucket"
 
 
-run()
+def jobs_to_run():
+    content_object = s3_client.get_object(Bucket=bucket_name, Key="jobData.json")
+    file_content = content_object['Body'].read()
+    data = json.loads(file_content)
 
+    if data is None:
+        raise Exception("json must have at least some value")
+
+    if not isinstance(data, list):
+        raise Exception("json must be a list")
+
+    for iteration, element in enumerate(data):
+        element['Iteration'] = iteration
+
+    batch_index = os.environ.get('AWS_BATCH_JOB_ARRAY_INDEX')
+
+    if batch_index is None:
+        return data
+
+    index = int(batch_index)
+
+    data_len = len(data)
+    if index >= data_len:
+        raise Exception(f"job json has too few values expected element {index} out of {data_len}")
+
+    return [data[index]]
+
+
+elements = jobs_to_run()
+
+for taxi_data in elements:
+    file_url = taxi_data['FileUrl']
+    i = taxi_data['Iteration']
+    print(i)
+    print(file_url)
+    df = pd.read_parquet(file_url, engine='fastparquet')
+
+    lat_field = 'End_Lat'
+    long_field = 'End_Lon'
+    if 'dropoff_latitude' in df:
+        lat_field = 'dropoff_latitude'
+        long_field = 'dropoff_longitude'
+
+    if not lat_field in df:
+        raise Exception(f"unable to find lat_field {lat_field} out of {df.columns}")
+
+    dropoff_x, dropoff_y = TRAN_4326_TO_3857.transform(
+        df[lat_field].to_numpy(),
+        df[long_field].to_numpy())
+
+    df['dropoff_x'] = dropoff_x
+    df['dropoff_y'] = dropoff_y
+    filt = (df['dropoff_x'] >= -8254332.0) & (df['dropoff_x'] <= -8209813.5) & \
+           (4965255.5 <= df['dropoff_y']) & (4988769.5 >= df['dropoff_y'])
+    df = df.loc[filt]
+    canvas = ds.Canvas(plot_width=1400, plot_height=1000)
+    agg = canvas.points(df, 'dropoff_x', 'dropoff_y')
+    shaded = ds.tf.shade(agg, cmap=cc.fire)
+
+    exportPath = "../../data/results"
+    curr_platform = platform.system()
+    if curr_platform != 'Windows':
+        exportPath = "/tmp"
+    file_name = f"output-iteration-{i:03d}"
+    export_image(shaded, file_name, background="black", export_path=exportPath)
+
+    full_path = f"{exportPath}/{file_name}.png"
+
+    response = s3_client.upload_file(full_path, bucket_name, f"output_images/{file_name}.png")
+
+    print(full_path)
+    print(f"finished - {i}")

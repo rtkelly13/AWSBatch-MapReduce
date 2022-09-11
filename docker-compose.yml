@@ -1,0 +1,17 @@
+﻿version: "3.9"  # optional since v1.27.0
+services:
+#  setup:
+#    build: 
+#      context: .
+#      dockerfile: Dockerfile
+#  map:
+#    build:
+#      context: .
+#      dockerfile: Python.Dockerfile
+#    env_file: .env
+  reduce:
+    build:
+      context: .
+      dockerfile: Powershell.Dockerfile
+    env_file: .env
+    

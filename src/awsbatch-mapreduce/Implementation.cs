@@ -11,10 +11,10 @@ using NodaTime;
 
 namespace awsbatch_mapreduce;
 
-public static partial class Implementation
+public static class Implementation
 {
     private static readonly YearMonth Min = new(2009, 1);
-    private static readonly YearMonth Max = new(2022, 6);
+    private static readonly YearMonth Max = new(2010, 12);
     private const string Url = "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_{0}.parquet";
 
     private static IEnumerable<YearMonth> LoadAllDates()
@@ -27,7 +27,7 @@ public static partial class Implementation
         }
     }
 
-    public static async Task<int> SetupJob(SetupConfig setupConfig)
+    public static async Task<int> SetupJob()
     {
         using var s3Client = new AmazonS3Client();
         using var batchClient = new AmazonBatchClient();
@@ -44,32 +44,27 @@ public static partial class Implementation
         
         var json = JsonConvert.SerializeObject(files);
         using var ms = new MemoryStream(Encoding.UTF8.GetBytes(json));
-        await UploadFile(s3Client, ms, "jobData.json");
+        await S3.UploadFile(s3Client, ms, "jobData.json");
 
         var mapJobResponse = await batchClient.SubmitJobAsync(new SubmitJobRequest
         {
             JobName = "MapJob",
-            JobDefinition = Constants.JobName,
+            JobDefinition = $"{Constants.JobName}-map",
             JobQueue = Constants.JobQueue,
             ArrayProperties = new ArrayProperties
             {
-                Size = files.Count,
+                Size = files.Count ,
+                //Size = 2,
             },
-            Parameters = new Dictionary<string, string>
-            {
-                { "Verb", "Map" }
-            }
+            Parameters = new Dictionary<string, string>()
         });
 
         var reduceMapJob = await batchClient.SubmitJobAsync(new SubmitJobRequest
         {
             JobName = "ReduceJob",
-            JobDefinition = Constants.JobName,
+            JobDefinition = $"{Constants.JobName}-reduce",
             JobQueue = Constants.JobQueue,
-            Parameters = new Dictionary<string, string>
-            {
-                { "Verb", "Reduce" }
-            },
+            Parameters = new Dictionary<string, string>(),
             DependsOn = new List<JobDependency>
             {
                 new()
